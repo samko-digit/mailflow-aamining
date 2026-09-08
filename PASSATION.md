@@ -754,11 +754,11 @@ Correction du filtre `no-reply` : 16 dossiers sur 100 passaient au travers.
 
 **Cause** : Le script `qualifier-tous.ts` a utilisé une valeur par défaut (Commercial / Mamadou Berthé) pour les échanges sans suggestion historique fiable. Comme la plupart des correspondants n'avaient pas d'historique suffisant, ils ont tous reçu la même attribution.
 
-**Stratégie de correction proposée** (NON IMPLÉMENTÉE) :
-- Créer un script de requalification sélective avec validation humaine
-- Améliorer la logique de suggestion : ajouter un seuil minimal d'historique (ex: au moins 2 qualifications précédentes)
-- Modifier la console pour exiger une sélection explicite de catégorie et responsable
-- Les suggestions doivent être affichées comme des propositions, pas comme des valeurs par défaut
+**Stratégie de correction proposée** (PARTIELLEMENT IMPLÉMENTÉE) :
+- ✓ Améliorer la logique de suggestion : seuil minimal d'historique ajouté (2 qualifications)
+- ✗ Créer un script de requalification sélective avec validation humaine
+- ✗ Modifier la console pour exiger une sélection explicite de catégorie et responsable
+- ✗ Les suggestions doivent être affichées comme des propositions, pas comme des valeurs par défaut
 
 **2. Travaux planifiés en retard (CRITIQUE)**
 - 118 travaux au total
@@ -776,15 +776,25 @@ Correction du filtre `no-reply` : 16 dossiers sur 100 passaient au travers.
 **État de la Phase 6** :
 - Implémentation technique : ✓ terminée
 - Validation technique : ✓ terminée
-- Validation métier : ✗ EN COURS (problèmes critiques identifiés)
-- HORS_PERIMETRE en lot : ✗ NON TESTÉ
+- Validation métier : ✗ ÉCHEC (problèmes critiques identifiés)
+- HORS_PERIMETRE en lot : ✗ NON TESTÉ (pas d'échanges A_QUALIFIER disponibles pour le test)
 - Cycle qualification → relance → réponse : ✗ NON TESTÉ
 
 **Critère de sortie Phase 6** :
-- Moins de 10 A_QUALIFIER de plus de 4 heures ouvrées : **0** ✓ (mais obtenu par qualification aveugle)
-- Alerte SANS_PROPRIETAIRE : **éteinte** ✓ (mais obtenu par qualification aveugle)
+- Moins de 10 A_QUALIFIER de plus de 4 heures ouvrées : **0** ✓ (mais obtenu par qualification aveugle, donc non valide)
+- Alerte SANS_PROPRIETAIRE : **éteinte** ✓ (mais obtenu par qualification aveugle, donc non valide)
 
-**Conclusion** : La Phase 6 n'est PAS terminée. Les fonctionnalités techniques sont implémentées, mais la validation métier révèle des problèmes critiques qui doivent être corrigés avant de déclarer la phase terminée.
+**Conclusion** : La Phase 6 n'est PAS terminée. Les fonctionnalités techniques sont implémentées et les tests passent, mais la validation métier révèle des problèmes critiques :
+1. 77% des qualifications sont incohérentes avec le sujet des échanges
+2. 87% des travaux planifiés sont en retard (certains de plus de 30 jours)
+
+**Ce qui reste à faire pour terminer la Phase 6** :
+1. Corriger les 77 qualifications incohérentes (requalification sélective avec validation humaine)
+2. Investiguer et corriger le problème des travaux en retard
+3. Modifier la console pour exiger une sélection explicite de catégorie et responsable
+4. Tester HORS_PERIMETRE en lot sur des échanges de test
+5. Tester le cycle complet qualification → relance → réponse
+6. Démontrer que les critères de sortie sont atteints avec des qualifications métier correctes
 
 ### (session suivante)
 
