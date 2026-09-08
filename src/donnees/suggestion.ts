@@ -3,17 +3,21 @@
  *
  * Pré-suggère la catégorie et le responsable d'après l'historique du
  * correspondant. Un correspondant déjà rencontré a presque toujours la même
- * catégorie et le même interlocuteur.
  */
 
 import { prisma } from "../lib/prisma";
 
+/** Seuil minimal d'historique pour considérer une suggestion comme fiable. */
+const SEUIL_HISTORIQUE_MINIMAL = 2;
+
 /**
- * Suggestion de qualification pour un correspondant.
+ * Suggère une catégorie et un responsable pour un correspondant.
  *
- * Retourne la catégorie et le responsable les plus fréquemment utilisés
- * dans les échanges passés de ce correspondant, en excluant les statuts
- * de clôture (HORS_PERIMETRE, SANS_SUITE, ARCHIVE).
+ * La suggestion est basée sur l'historique des échanges déjà qualifiés
+ * pour ce correspondant. On prend le couple (categorie, responsable)
+ * le plus fréquent.
+ *
+ * Retourne null si l'historique est insuffisant (moins de SEUIL_HISTORIQUE_MINIMAL).
  */
 export async function suggérerPourCorrespondant(
   correspondantId: string
@@ -38,6 +42,11 @@ export async function suggérerPourCorrespondant(
   // Trier manuellement par nombre d'occurrences
   const trie = historique.sort((a, b) => b._count._all - a._count._all);
 
+  // Vérifier que le meilleur candidat a un historique suffisant
+  if (trie[0]._count._all < SEUIL_HISTORIQUE_MINIMAL) {
+    return { categorieId: null, responsableId: null };
+  }
+
   return {
     categorieId: trie[0].categorieId,
     responsableId: trie[0].responsableId,
@@ -48,6 +57,7 @@ export async function suggérerPourCorrespondant(
  * Suggestions pour plusieurs correspondants en une seule requête.
  *
  * Optimisation pour la qualification en lot : évite N+1 requêtes.
+ * Applique le même seuil minimal que suggérerPourCorrespondant.
  */
 export async function suggérerPourPlusieurs(
   correspondantIds: string[]
@@ -79,13 +89,16 @@ export async function suggérerPourPlusieurs(
   const trie = historique.sort((a, b) => b._count._all - a._count._all);
 
   // Garder seulement la meilleure suggestion par correspondant
+  // SEUIL : ne suggérer que si l'historique est suffisant
   const vus = new Set<string>();
   for (const ligne of trie) {
     if (!vus.has(ligne.correspondantId)) {
-      resultats.set(ligne.correspondantId, {
-        categorieId: ligne.categorieId,
-        responsableId: ligne.responsableId,
-      });
+      if (ligne._count._all >= SEUIL_HISTORIQUE_MINIMAL) {
+        resultats.set(ligne.correspondantId, {
+          categorieId: ligne.categorieId,
+          responsableId: ligne.responsableId,
+        });
+      }
       vus.add(ligne.correspondantId);
     }
   }
