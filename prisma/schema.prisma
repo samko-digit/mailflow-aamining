@@ -1,0 +1,614 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  MailFlow · Suivi · Relance · Résultats
+//  Schéma de données · V1.0 · 6 septembre 2026
+//
+//  Conventions :
+//   - modèles en PascalCase, champs en camelCase, tables en snake_case (@@map)
+//   - toutes les dates sont en UTC dans la base, converties au fuseau du site
+//     à l'affichage (paramètre `fuseau_site`)
+//   - les index partiels et la recherche plein texte ne sont pas exprimables
+//     en Prisma : voir prisma/sql/01_index_partiels.sql et 02_recherche.sql
+// ═══════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 : l'URL de connexion ne vit plus ici. Elle est déclarée dans
+// prisma.config.ts pour Migrate, et passée au client via un adaptateur.
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  ÉNUMÉRATIONS
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Rôles applicatifs. Le rôle est porté par MailFlow, pas par l'annuaire.
+enum Role {
+  ADMINISTRATEUR /// Paramétrage, utilisateurs, règles, journal complet
+  GESTIONNAIRE /// Qualifie, attribue, clôt, relance manuellement
+  RESPONSABLE /// Voit et traite les échanges dont il est propriétaire
+  LECTEUR /// Consultation et recherche uniquement
+}
+
+/// États d'un échange. Mutuellement exclusifs : c'est ce qui permet à la
+/// répartition affichée sur le tableau de bord de sommer au total.
+/// « En retard » n'est PAS un état : c'est `echeance < now()` sur un état actif.
+enum StatutEchange {
+  A_QUALIFIER /// Capté, engagement non tranché
+  EN_ATTENTE /// Propriétaire désigné, compte à rebours lancé
+  RELANCE /// Au moins une relance envoyée, toujours sans réponse
+  ESCALADE /// Relances épuisées, hiérarchie informée
+  REPONDU /// Réponse détectée ou déclarée, relances arrêtées
+  SANS_SUITE /// Décision explicite de ne pas répondre (motif obligatoire)
+  HORS_PERIMETRE /// Faux positif, alimente la liste d'exclusion
+  ARCHIVE /// Fil et pièces déposés dans le stockage objet
+}
+
+/// Sert au liseré de couleur en tête de ligne dans la console.
+enum Priorite {
+  BASSE
+  NORMALE
+  HAUTE
+  CRITIQUE
+}
+
+enum TypeCorrespondant {
+  CLIENT
+  FOURNISSEUR
+  AUTORITE /// Tutelle, douane, administration fiscale : porte souvent une date butoir
+  PARTENAIRE
+  INTERNE
+  AUTRE
+}
+
+enum SensMessage {
+  ENTRANT
+  SORTANT
+}
+
+/// Canal par lequel la réponse a été obtenue. Un échange peut se clore
+/// hors messagerie : le registre doit refléter la réalité, pas seulement Outlook.
+enum CanalReponse {
+  MAIL
+  TELEPHONE
+  REUNION
+  WHATSAPP
+  PHYSIQUE
+}
+
+/// Qui reçoit une relance donnée. Résolu à l'envoi, pas à la planification :
+/// le suppléant dépend des absences en cours au moment de l'envoi.
+enum DestinataireRelance {
+  PROPRIETAIRE
+  SUPPLEANT
+  ESCALADE
+}
+
+enum TypeTravail {
+  RELANCE
+  VERIFICATION_REPONSE
+  ESCALADE
+  ARCHIVAGE
+  SYNCHRO_BOITE
+  RENOUVELLEMENT_ABONNEMENT
+}
+
+enum StatutTravail {
+  EN_ATTENTE
+  EN_COURS
+  TERMINE
+  ECHEC /// Tentatives épuisées : déclenche une alerte, jamais un nouvel essai silencieux
+  ANNULE /// Rendu caduc, typiquement par la détection d'une réponse
+}
+
+enum StatutRelance {
+  ENVOYEE
+  ECHEC
+}
+
+/// Alimente « Activité récente » et « Journal d'activité ».
+enum TypeEvenement {
+  MAIL_DETECTE
+  MAIL_ENREGISTRE
+  MAIL_QUALIFIE
+  MAIL_ATTRIBUE
+  MAIL_TRANSMIS
+  RELANCE_ENVOYEE
+  RELANCE_REPORTEE
+  RELANCE_ECHEC
+  REPONSE_DETECTEE
+  REPONSE_DECLAREE
+  ESCALADE_DECLENCHEE
+  ECHANGE_CLOS
+  MAIL_ARCHIVE
+  PARAMETRE_MODIFIE
+  REGLE_MODIFIEE
+  UTILISATEUR_MODIFIE
+  ANOMALIE_TECHNIQUE
+}
+
+enum Acteur {
+  SYSTEME
+  UTILISATEUR
+}
+
+enum TypeExclusion {
+  ADRESSE /// Correspondance exacte
+  DOMAINE /// Tout un domaine expéditeur
+  MOTIF /// Expression régulière sur l'adresse ou l'objet
+}
+
+enum Fournisseur {
+  MICROSOFT
+  GOOGLE
+  IMAP
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  PERSONNES
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Comptes MailFlow. L'identité vient de l'annuaire du client (fédération) ;
+/// `entraObjectId` fait le lien. Aucun mot de passe n'est stocké ici.
+model Utilisateur {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  nomComplet    String   @map("nom_complet")
+  initiales     String? /// Repli quand aucune photo n'est disponible
+  avatarUrl     String?  @map("avatar_url")
+  fonction      String?
+  role          Role     @default(RESPONSABLE)
+  actif         Boolean  @default(true)
+  entraObjectId String?  @unique @map("entra_object_id")
+
+  /// Suppléant par défaut. Reçoit les relances pendant une absence déclarée.
+  suppleantId String?       @map("suppleant_id")
+  suppleant   Utilisateur?  @relation("Suppleance", fields: [suppleantId], references: [id], onDelete: SetNull)
+  supplees    Utilisateur[] @relation("Suppleance")
+
+  absences           Absence[]
+  echangesResponsable Echange[]  @relation("EchangeResponsable")
+  echangesRepondus   Echange[]   @relation("EchangeReponsePar")
+  relancesRecues     Relance[]   @relation("RelanceDestinataire")
+  evenements         Evenement[] @relation("EvenementAuteur")
+  categoriesEscalade Categorie[] @relation("CategorieEscalade")
+
+  creeLe     DateTime @default(now()) @map("cree_le")
+  modifieLe  DateTime @updatedAt @map("modifie_le")
+
+  @@index([actif, nomComplet])
+  @@map("utilisateur")
+}
+
+/// Absences déclarées à la main. Version allégée retenue avec le client :
+/// pas de synchronisation avec un logiciel de planning tant qu'il n'en fournit pas.
+model Absence {
+  id            String   @id @default(cuid())
+  utilisateurId String   @map("utilisateur_id")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Cascade)
+  debut         DateTime
+  fin           DateTime
+  motif         String?
+
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  @@index([utilisateurId, debut, fin])
+  @@map("absence")
+}
+
+/// Interlocuteur externe. Créé automatiquement à la première réception.
+model Correspondant {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  nom          String?
+  organisation String?
+  type         TypeCorrespondant @default(AUTRE)
+  notes        String?
+  actif        Boolean           @default(true)
+
+  echanges Echange[]
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@index([organisation])
+  @@map("correspondant")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  SOURCE
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Une boîte surveillée. Une seule au démarrage, le modèle en prévoit plusieurs.
+/// Porte l'état de la synchronisation : c'est ici que vivent le jeton
+/// différentiel et l'échéance de l'abonnement aux notifications, dont
+/// l'oubli de renouvellement est la panne la plus fréquente de ce type d'outil.
+model BoiteSuivie {
+  id      String      @id @default(cuid())
+  adresse String      @unique
+  libelle String
+  fournisseur Fournisseur @default(MICROSOFT)
+  actif   Boolean     @default(true)
+
+  abonnementId        String?   @map("abonnement_id")
+  abonnementExpireLe  DateTime? @map("abonnement_expire_le")
+  jetonDelta          String?   @map("jeton_delta")
+  derniereSynchroLe   DateTime? @map("derniere_synchro_le")
+  derniereAnomalie    String?   @map("derniere_anomalie")
+
+  echanges Echange[]
+  messages Message[]
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@map("boite_suivie")
+}
+
+/// Liste d'exclusion : notifications, plateformes, veille commerciale.
+/// C'est le filtre le plus rentable du dispositif compte tenu du bruit
+/// qui domine une boîte de correspondance.
+model ExpediteurExclu {
+  id     String        @id @default(cuid())
+  type   TypeExclusion @default(ADRESSE)
+  valeur String
+  motif  String? /// Pourquoi il a été exclu, pour pouvoir le retirer plus tard
+  actif  Boolean       @default(true)
+
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  @@unique([type, valeur])
+  @@map("expediteur_exclu")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  PARAMÉTRAGE MÉTIER
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Catégorie d'échange. Porte la priorité par défaut et la cible d'escalade.
+/// Les délais sont dans RegleRelance, une ligne par relance successive.
+model Categorie {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  libelle   String
+  couleur   String   @default("#3d6675") /// Liseré de la ligne dans la console
+  priorite  Priorite @default(NORMALE)
+  ordre     Int      @default(0)
+  actif     Boolean  @default(true)
+
+  /// Vrai pour les catégories dont l'échéance est imposée de l'extérieur
+  /// (tutelle, douane, fiscalité). Les relances se calculent alors à rebours
+  /// depuis `Echange.dateButoir` et non en avant depuis la réception.
+  aDateButoir Boolean @default(false) @map("a_date_butoir")
+
+  escaladeVersId String?      @map("escalade_vers_id")
+  escaladeVers   Utilisateur? @relation("CategorieEscalade", fields: [escaladeVersId], references: [id], onDelete: SetNull)
+
+  regles   RegleRelance[]
+  echanges Echange[]
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@map("categorie")
+}
+
+/// Une ligne par relance successive d'une catégorie. `ordre` = 1 pour la
+/// première relance. `delaiJoursOuvres` se compte depuis la réception, ou
+/// à rebours depuis la date butoir si la catégorie en porte une.
+model RegleRelance {
+  id          String    @id @default(cuid())
+  categorieId String    @map("categorie_id")
+  categorie   Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade)
+
+  ordre            Int
+  delaiJoursOuvres Int                 @map("delai_jours_ouvres")
+  destinataire     DestinataireRelance @default(PROPRIETAIRE)
+  copieA           String[]            @default([]) @map("copie_a")
+
+  modeleId String?        @map("modele_id")
+  modele   ModeleMessage? @relation(fields: [modeleId], references: [id], onDelete: SetNull)
+
+  actif Boolean @default(true)
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@unique([categorieId, ordre])
+  @@map("regle_relance")
+}
+
+/// Modèles de message. Trois suffisent : rappel courtois, rappel ferme,
+/// note d'escalade. Variables au format {{nom}}.
+model ModeleMessage {
+  id      String  @id @default(cuid())
+  code    String  @unique
+  libelle String
+  sujet   String
+  corps   String
+  actif   Boolean @default(true)
+
+  regles   RegleRelance[]
+  relances Relance[]
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@map("modele_message")
+}
+
+/// Jours chômés. Saisis par l'administrateur, jamais codés en dur.
+/// Ajouter un jour férié doit déclencher le recalcul des échéances à venir.
+model JourFerie {
+  id      String   @id @default(cuid())
+  date    DateTime @unique @db.Date
+  libelle String
+
+  @@map("jour_ferie")
+}
+
+/// Paramètres généraux : fuseau du site, fenêtre d'envoi, cadence de synchro,
+/// seuils d'alerte. Une seule table clé/valeur plutôt qu'une colonne par réglage.
+model Parametre {
+  cle     String @id
+  valeur  Json
+  libelle String
+
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@map("parametre")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  CŒUR : L'ÉCHANGE
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Le dossier de suivi. UNE LIGNE PAR CONVERSATION, jamais par message.
+/// C'est la table que la console affiche et que le moteur de relance lit.
+model Echange {
+  id     String @id @default(cuid())
+  numero Int    @unique @default(autoincrement()) /// Référence parlante, citée en réunion
+
+  boiteId String      @map("boite_id")
+  boite   BoiteSuivie @relation(fields: [boiteId], references: [id])
+
+  /// Identifiant de conversation fourni par la messagerie. Unique PAR BOÎTE :
+  /// c'est une notion propre à une boîte, elle ne se compare pas d'une boîte
+  /// à l'autre. Signal n°1 de la détection des réponses.
+  conversationId String @map("conversation_id")
+
+  sujet   String
+  extrait String? /// Aperçu du corps. Le corps intégral n'est jamais stocké ici.
+  webLink String? @map("web_link") /// Ouverture directe dans Outlook
+
+  correspondantId String        @map("correspondant_id")
+  correspondant   Correspondant @relation(fields: [correspondantId], references: [id])
+
+  categorieId String?    @map("categorie_id")
+  categorie   Categorie? @relation(fields: [categorieId], references: [id], onDelete: SetNull)
+
+  priorite Priorite      @default(NORMALE)
+  statut   StatutEchange @default(A_QUALIFIER)
+
+  responsableId String?      @map("responsable_id")
+  responsable   Utilisateur? @relation("EchangeResponsable", fields: [responsableId], references: [id], onDelete: SetNull)
+
+  recuLe DateTime @map("recu_le")
+
+  /// Date de réponse attendue, calculée UNE FOIS et écrite. Ne jamais la
+  /// recalculer à l'affichage : sinon on ne peut plus expliquer pourquoi
+  /// une relance est partie ce jour-là.
+  echeance DateTime?
+
+  /// Date limite imposée de l'extérieur (tutelle, douane, fiscalité).
+  /// Ne se décale pas parce que personne ne travaille le week-end.
+  dateButoir DateTime? @map("date_butoir")
+
+  prochaineRelanceLe DateTime? @map("prochaine_relance_le")
+  derniereRelanceLe  DateTime? @map("derniere_relance_le")
+
+  /// Compteur dénormalisé, incrémenté DANS LA MÊME TRANSACTION que l'insertion
+  /// dans `relance`. La table `relance` reste la vérité ; un contrôle nocturne
+  /// compare les deux et signale toute divergence.
+  nbRelances Int @default(0) @map("nb_relances")
+
+  reponduLe        DateTime?     @map("repondu_le")
+  reponseMessageId String?       @map("reponse_message_id") /// Preuve de ce qui a arrêté les relances
+  reponseParId     String?       @map("reponse_par_id")
+  reponsePar       Utilisateur?  @relation("EchangeReponsePar", fields: [reponseParId], references: [id], onDelete: SetNull)
+  canalReponse     CanalReponse? @map("canal_reponse")
+
+  /// Obligatoire pour SANS_SUITE et pour toute clôture manuelle.
+  motifCloture String? @map("motif_cloture")
+
+  aPieceJointe Boolean   @default(false) @map("a_piece_jointe")
+  archiveLe    DateTime? @map("archive_le")
+  archiveUrl   String?   @map("archive_url")
+
+  /// Colonne générée en SQL (voir prisma/sql/02_recherche.sql).
+  /// Déclarée ici pour que Prisma ne la supprime pas à la migration suivante.
+  recherche Unsupported("tsvector")?
+
+  messages  Message[]
+  relances  Relance[]
+  travaux   TravailPlanifie[]
+  evenements Evenement[]
+
+  creeLe    DateTime @default(now()) @map("cree_le")
+  modifieLe DateTime @updatedAt @map("modifie_le")
+
+  @@unique([boiteId, conversationId])
+  @@index([statut, echeance])
+  @@index([responsableId, statut])
+  @@index([correspondantId, recuLe])
+  @@index([prochaineRelanceLe])
+  @@index([recuLe])
+  @@map("echange")
+}
+
+/// Chaque message du fil, entrant comme sortant. Le sortant sert à prouver
+/// qu'une réponse est partie et à identifier son auteur.
+model Message {
+  id String @id @default(cuid())
+
+  echangeId String  @map("echange_id")
+  echange   Echange @relation(fields: [echangeId], references: [id], onDelete: Cascade)
+
+  boiteId String      @map("boite_id")
+  boite   BoiteSuivie @relation(fields: [boiteId], references: [id])
+
+  /// Identifiant normalisé porté par le message lui-même, stable entre
+  /// systèmes de messagerie. Contrainte d'unicité : c'est la BASE qui refuse
+  /// le doublon, pas une vérification préalable dans le code.
+  internetMessageId String @unique @map("internet_message_id")
+
+  /// Identifiant propre au fournisseur, pour aller relire le message.
+  messageIdFournisseur String? @map("message_id_fournisseur")
+
+  inReplyTo  String?  @map("in_reply_to")
+  references String[] @default([]) /// Chaîne des parents, signal n°2
+
+  sens         SensMessage
+  expediteur   String
+  destinataires String[] @default([])
+  copie        String[] @default([])
+  sujet        String
+  extrait      String?
+  dateMessage  DateTime @map("date_message")
+
+  aPieceJointe Boolean @default(false) @map("a_piece_jointe")
+
+  /// Réponse automatique, absence du bureau ou rapport de non-remise.
+  /// Ne vaut jamais réponse. Un rapport de non-remise est un INCIDENT :
+  /// le courriel n'est pas parti, l'échange repasse en attente avec alerte.
+  estAutomatique Boolean @default(false) @map("est_automatique")
+  estNonRemise   Boolean @default(false) @map("est_non_remise")
+
+  piecesJointes PieceJointe[]
+
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  @@index([echangeId, dateMessage])
+  @@index([boiteId, dateMessage])
+  @@map("message")
+}
+
+/// Métadonnées des pièces jointes. Le fichier vit dans le stockage objet,
+/// jamais en base. Le nom d'origine est conservé tel quel : une pièce
+/// renommée est une pièce perdue pour le correspondant qui la redemande.
+model PieceJointe {
+  id        String  @id @default(cuid())
+  messageId String  @map("message_id")
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  nomOrigine  String @map("nom_origine")
+  typeMime    String @map("type_mime")
+  tailleOctets BigInt @map("taille_octets")
+  empreinte   String? /// SHA-256, prouve la non-altération
+  cleStockage String? @map("cle_stockage") /// Vide tant que non téléchargée
+  telechargeLe DateTime? @map("telecharge_le")
+
+  /// Image incorporée dans une signature : ignorée par défaut.
+  estIncorporee Boolean @default(false) @map("est_incorporee")
+
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  @@index([messageId])
+  @@map("piece_jointe")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  RELANCES ET ORDONNANCEMENT
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Une ligne par relance EFFECTIVEMENT ENVOYÉE. Une relance en échec ne
+/// consomme pas de rang et déclenche une alerte.
+model Relance {
+  id        String  @id @default(cuid())
+  echangeId String  @map("echange_id")
+  echange   Echange @relation(fields: [echangeId], references: [id], onDelete: Cascade)
+
+  ordre Int /// 1 = première relance
+
+  destinataireId String      @map("destinataire_id")
+  destinataire   Utilisateur @relation("RelanceDestinataire", fields: [destinataireId], references: [id])
+  copieA         String[]    @default([]) @map("copie_a")
+
+  modeleId String?        @map("modele_id")
+  modele   ModeleMessage? @relation(fields: [modeleId], references: [id], onDelete: SetNull)
+
+  statut          StatutRelance @default(ENVOYEE)
+  envoyeeLe       DateTime      @default(now()) @map("envoyee_le")
+  messageIdEnvoye String?       @map("message_id_envoye")
+  erreur          String?
+
+  /// Empêche le double envoi si le traitement est rejoué après un incident.
+  cleIdempotence String @unique @map("cle_idempotence")
+
+  @@unique([echangeId, ordre])
+  @@index([envoyeeLe])
+  @@map("relance")
+}
+
+/// File de travaux persistée en base. Une tâche planifiée en mémoire
+/// disparaît au redémarrage ; les échéances doivent survivre à un arrêt.
+/// Lue par une requête unique avec FOR UPDATE SKIP LOCKED, ce qui permet
+/// plusieurs exécutants sans double envoi (voir docs/modele-donnees.md).
+model TravailPlanifie {
+  id   String      @id @default(cuid())
+  type TypeTravail
+
+  echangeId String?  @map("echange_id")
+  echange   Echange? @relation(fields: [echangeId], references: [id], onDelete: Cascade)
+
+  executerA DateTime      @map("executer_a")
+  statut    StatutTravail @default(EN_ATTENTE)
+
+  tentatives     Int       @default(0)
+  derniereErreur String?   @map("derniere_erreur")
+  verrouPar      String?   @map("verrou_par") /// Identifiant de l'exécutant
+  verrouA        DateTime? @map("verrou_a")
+
+  charge Json? /// Données nécessaires à l'exécution (ordre de relance, cible…)
+
+  cleIdempotence String @unique @map("cle_idempotence")
+
+  creeLe    DateTime  @default(now()) @map("cree_le")
+  termineLe DateTime? @map("termine_le")
+
+  @@index([statut, executerA])
+  @@index([echangeId, type])
+  @@map("travail_planifie")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  TRAÇABILITÉ
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Alimente « Activité récente » et « Journal d'activité ». Table en
+/// écriture seule : on n'y modifie ni n'y supprime jamais une ligne.
+model Evenement {
+  id     String        @id @default(cuid())
+  type   TypeEvenement
+  acteur Acteur        @default(SYSTEME)
+
+  utilisateurId String?      @map("utilisateur_id")
+  utilisateur   Utilisateur? @relation("EvenementAuteur", fields: [utilisateurId], references: [id], onDelete: SetNull)
+
+  echangeId String?  @map("echange_id")
+  echange   Echange? @relation(fields: [echangeId], references: [id], onDelete: SetNull)
+
+  libelle     String
+  valeurAvant Json?  @map("valeur_avant")
+  valeurApres Json?  @map("valeur_apres")
+
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  @@index([creeLe])
+  @@index([echangeId, creeLe])
+  @@index([type, creeLe])
+  @@map("evenement")
+}
