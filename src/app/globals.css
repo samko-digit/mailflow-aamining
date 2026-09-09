@@ -277,6 +277,8 @@ tbody tr:hover td { background: #fafcff; }
 .cellule-sujet > div { min-width: 0; }
 .liseré { width: 3px; align-self: stretch; border-radius: 3px; flex: none; min-height: 32px; }
 .sujet-titre { font-weight: 600; font-size: 13.5px; line-height: 1.35; }
+.sujet-titre a { color: var(--bleu); }
+.sujet-titre a:hover { text-decoration: underline; }
 .sujet-extrait {
   font-size: 12px; color: var(--encre-3); margin-top: 2px;
   display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1;
@@ -481,6 +483,8 @@ tbody tr:hover td { background: #fafcff; }
 }
 .popover select:focus, .popover input:focus { outline: 2px solid var(--bleu); outline-offset: -1px; }
 
+/* ── Boutons ─────────────────────────────────────────────────────────── */
+
 .btn {
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   padding: 7px 12px; border-radius: 7px;
@@ -493,6 +497,8 @@ tbody tr:hover td { background: #fafcff; }
 .btn.succes { background: var(--vert); border-color: var(--vert); color: #fff; }
 .btn.attention { background: var(--orange-clair); border-color: var(--orange); color: var(--orange); }
 .btn.danger { background: var(--rouge-clair); border-color: var(--rouge); color: var(--rouge); }
+.btn.danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.attention:disabled { opacity: 0.5; cursor: not-allowed; }
 .aide { font-size: 11.5px; color: var(--encre-3); line-height: 1.4; }
 
 /* La cellule d'actions ne doit pas se laisser étirer par le popover. */
@@ -571,4 +577,106 @@ tbody td:first-child input[type="checkbox"]:disabled {
 thead th:first-child input[type="checkbox"] {
   width: 16px; height: 16px; cursor: pointer;
   accent-color: var(--bleu);
+}
+
+/* ── Formulaires en ligne dans les cartes ─────────────────────────────── */
+.prochaine .bas form { margin-left: auto; }
+.prochaine .bouton { cursor: pointer; font: inherit; }
+.recherche { border: 0; padding: 0; margin: 0; }
+a.mini { text-decoration: none; }
+button.mini, .bouton-icone { cursor: pointer; font: inherit; }
+.inline-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inline-form input[type="text"] { min-width: 180px; }
+
+/* ── Styles pour la fiche dossier ─────────────────────────────────── */
+
+.statut-pastille { margin-left: auto; }
+
+.infos { display: flex; flex-direction: column; gap: 12px; }
+.info-ligne {
+  display: flex; justify-content: space-between; padding: 8px 0;
+  border-bottom: 1px solid var(--bord);
+}
+.info-ligne:last-child { border-bottom: none; }
+.info-ligne .label { color: var(--encre-2); font-size: 12px; }
+.info-ligne span { font-weight: 600; }
+
+.travail-ligne {
+  display: flex; justify-content: space-between; padding: 10px;
+  background: var(--carte-alt); border-radius: var(--rayon-s);
+}
+.travail-type { font-weight: 600; }
+.travail-statut { font-size: 12px; color: var(--encre-2); }
+.travail-echeance { font-weight: 600; }
+
+.actions-dispo { display: flex; flex-direction: column; gap: 12px; }
+.action-form { display: flex; flex-direction: column; gap: 8px; }
+.action-form .champs { display: flex; gap: 8px; }
+.action-form .champs select {
+  flex: 1; padding: 8px 12px; border-radius: var(--rayon-s);
+  border: 1px solid var(--bord); font-size: 13px;
+}
+.action-group { display: flex; gap: 8px; }
+
+.requalification-info {
+  background: var(--orange-clair); padding: 10px; border-radius: var(--rayon-s);
+  margin-bottom: 8px;
+}
+.requalification-avant {
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+}
+.requalification-avant .label {
+  font-weight: 600; color: var(--encre-2);
+  margin-bottom: 2px;
+}
+.requalification-avant span {
+  color: var(--encre);
+}
+
+.erreur-action {
+  background: var(--rouge-clair); color: var(--rouge);
+  padding: 8px 12px; border-radius: var(--rayon-s);
+  font-size: 12px; margin-bottom: 8px;
+}
+
+.action-form input[type="text"] {
+  width: 100%; padding: 8px 12px; border-radius: var(--rayon-s);
+  border: 1px solid var(--bord); font-size: 13px; margin-bottom: 8px;
+}
+
+.action-form input[type="text"]:focus {
+  outline: 2px solid var(--bleu); outline-offset: -1px;
+}
+
+.message-ligne {
+  padding: 10px; border-bottom: 1px solid var(--bord);
+}
+.message-ligne:last-child { border-bottom: none; }
+.message-meta { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.message-exp { font-weight: 600; font-size: 12px; }
+.message-date { font-size: 11px; color: var(--encre-3); }
+.message-sujet { font-size: 13px; color: var(--encre-2); }
+
+.relance-ligne {
+  padding: 10px; border-bottom: 1px solid var(--bord);
+}
+.relance-ligne:last-child { border-bottom: none; }
+.relance-meta { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.relance-statut {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 10px;
+}
+.relance-statut.succes { background: var(--vert-clair); color: var(--vert); }
+.relance-statut.erreur { background: var(--rouge-clair); color: var(--rouge); }
+.relance-date { font-size: 11px; color: var(--encre-3); }
+.relance-dest { font-size: 12px; color: var(--encre-2); }
+
+.activite-icone {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: var(--bleu); color: #fff;
 }
