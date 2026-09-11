@@ -1,0 +1,15 @@
+-- Ajoute TRANSFERT à l'enum TypeTravail.
+--
+-- Le schéma Prisma déclarait déjà cette valeur, mais aucune migration ne
+-- l'avait portée en base : creerTravailTransfert() échouait à l'exécution
+-- avec « valeur en entrée invalide pour le enum TypeTravail ». La
+-- fonctionnalité de transfert était donc inopérante, quel que soit l'état
+-- du workflow n8n.
+--
+-- Opération purement additive : aucune ligne existante n'est touchée.
+--
+-- Note de dérive : la base porte aussi VERIFICATION_REPONSE, valeur retirée
+-- du schéma Prisma. On ne la supprime PAS ici — retirer une valeur d'un enum
+-- PostgreSQL impose de recréer le type, et rien ne l'utilise. Elle est laissée
+-- en place, inerte.
+ALTER TYPE "TypeTravail" ADD VALUE IF NOT EXISTS 'TRANSFERT';

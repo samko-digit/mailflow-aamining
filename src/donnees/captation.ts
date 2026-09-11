@@ -26,6 +26,7 @@ import {
   type MessageCanonique,
   filtrerEntrant,
   rattacher,
+  estTransfertMailflow,
 } from "../connecteur/normalisation";
 import { appliquerEtPersister, dateArchivage } from "./executer";
 import { prisma } from "../lib/prisma";
@@ -301,6 +302,7 @@ async function enregistrerEntrant(
       aPieceJointe: m.aPieceJointe,
       estAutomatique: m.estAutomatique,
       estNonRemise: m.estNonRemise,
+      uidImap: m.uid,
       piecesJointes: {
         create: m.piecesJointes.map((p) => ({
           nomOrigine: p.nom,
@@ -330,7 +332,15 @@ async function traiterSortant(
   // Nos propres relances citent le message d'origine et se déposent dans les
   // envoyés. Sans cette porte, chaque première relance clôturerait l'échange
   // qu'elle vient de relancer.
-  if (m.estGenereParMailflow) return false;
+  if (m.estGenereParMailflow && m.mailflowType !== "transfer") return false;
+
+  // Les transferts MailFlow ne doivent pas déclencher DETECTER_REPONSE
+  // mais doivent être identifiables pour la corrélation
+  if (m.mailflowType === "transfer") {
+    // Pour le PoC : on ignore purement le transfert
+    // Il n'est pas une réponse client, donc pas de transition DETECTER_REPONSE
+    return false;
+  }
 
   const cites = [
     ...(m.enReponseA ? [m.enReponseA] : []),
@@ -379,6 +389,7 @@ async function traiterSortant(
         sujet: m.sujet,
         dateMessage: m.date,
         aPieceJointe: m.aPieceJointe,
+        uidImap: m.uid,
       },
     });
   }

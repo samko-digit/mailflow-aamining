@@ -23,7 +23,8 @@ export type TypeTravail =
   | "ESCALADE"
   | "ARCHIVAGE"
   | "SYNCHRO_BOITE"
-  | "RENOUVELLEMENT_ABONNEMENT";
+  | "RENOUVELLEMENT_ABONNEMENT"
+  | "TRANSFERT";
 
 export type Decision =
   | { action: "executer" }
@@ -50,6 +51,10 @@ export function travailEncorePertinent(
 ): boolean {
   const attendue = TRANSITION_DU_TRAVAIL[type];
   if (!attendue) return true;
+  
+  // TRANSFERT n'a pas de transition métier, il est toujours pertinent du point de vue du dossier
+  if (type === "TRANSFERT") return true;
+  
   return (transitionsPossibles(statut) as string[]).includes(attendue);
 }
 
@@ -74,8 +79,20 @@ export function deciderTravail(
   type: TypeTravail,
   maintenant: Date,
   cal: Calendrier,
-  statut?: Statut
+  statut?: Statut,
+  tempsEnCours?: number
 ): Decision {
+  // Cas spécial TRANSFERT : vérifier le timeout si EN_COURS depuis trop longtemps
+  if (type === "TRANSFERT" && tempsEnCours) {
+    const timeoutMinutes = Number(process.env.MAILFLOW_TRANSFERT_TIMEOUT_MINUTES ?? 30);
+    if (tempsEnCours > timeoutMinutes * 60_000) {
+      return {
+        action: "perimer",
+        raison: `transfert en attente depuis plus de ${timeoutMinutes} minutes sans callback`,
+      };
+    }
+  }
+  
   // La pertinence passe AVANT la fenêtre : sinon un travail devenu sans
   // objet serait reporté d'ouverture en ouverture, indéfiniment.
   if (statut && !travailEncorePertinent(type, statut)) {

@@ -44,6 +44,7 @@ export type TypeEvenement =
   | "MAIL_QUALIFIE"
   | "MAIL_ATTRIBUE"
   | "MAIL_TRANSMIS"
+  | "MAIL_REQUALIFIE"
   | "RELANCE_ENVOYEE"
   | "RELANCE_REPORTEE"
   | "RELANCE_ECHEC"
@@ -136,7 +137,21 @@ export type Transition =
     }
   | { type: "ROUVRIR"; motif: string; nouvelleEcheance: Date }
   | { type: "CLASSER_SANS_SUITE"; motif: string; archiverLe: Date }
-  | { type: "ARCHIVER"; url: string };
+  | { type: "ARCHIVER"; url: string }
+  | {
+      type: "REQUALIFIER";
+      categorie: string;
+      responsable: string;
+      echeance: Date;
+      premiereRelance: Date;
+      /** Libellés lisibles pour le journal */
+      libelleCategorie?: string;
+      libelleResponsable?: string;
+      /** Valeurs avant modification pour l'historique */
+      categorieAvant?: string;
+      responsableAvant?: string;
+      echeanceAvant?: Date;
+    };
 
 export type Effet =
   | {
@@ -231,6 +246,43 @@ export function appliquer(etat: EtatEchange, t: Transition): Resultat {
           {
             type: "JOURNALISER",
             evenement: "MAIL_QUALIFIE",
+            libelle: t.libelleCategorie ?? `Catégorie ${t.categorie}`,
+          },
+          {
+            type: "JOURNALISER",
+            evenement: "MAIL_ATTRIBUE",
+            libelle: t.libelleResponsable ?? `Responsable ${t.responsable}`,
+          },
+        ],
+      };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    case "REQUALIFIER": {
+      depuis(etat, t.type, ["EN_ATTENTE", "RELANCE", "ESCALADE"]);
+      texteNonVide(t.categorie, "categorie");
+      texteNonVide(t.responsable, "responsable");
+
+      return {
+        etat: {
+          ...etat,
+          statut: "EN_ATTENTE",
+          categorie: t.categorie,
+          responsable: t.responsable,
+          echeance: t.echeance,
+          nbRelances: 0, // Redémarrer le cycle de relances
+        },
+        effets: [
+          { type: "ANNULER_TRAVAUX" },
+          {
+            type: "PLANIFIER",
+            travail: "RELANCE",
+            quand: t.premiereRelance,
+            ordre: 1,
+          },
+          {
+            type: "JOURNALISER",
+            evenement: "MAIL_REQUALIFIE",
             libelle: t.libelleCategorie ?? `Catégorie ${t.categorie}`,
           },
           {
@@ -516,18 +568,19 @@ export function transitionsPossibles(statut: Statut): Transition["type"][] {
     case "A_QUALIFIER":
       return ["QUALIFIER", "CLASSER_HORS_PERIMETRE", "DETECTER_REPONSE", "DECLARER_REPONSE"];
     case "EN_ATTENTE":
-      return ["RELANCER", "ESCALADER", "REATTRIBUER", "DETECTER_REPONSE", "DECLARER_REPONSE"];
+      return ["RELANCER", "ESCALADER", "REATTRIBUER", "REQUALIFIER", "DETECTER_REPONSE", "DECLARER_REPONSE"];
     case "RELANCE":
       return [
         "RELANCER",
         "SIGNALER_NON_REMISE",
         "ESCALADER",
         "REATTRIBUER",
+        "REQUALIFIER",
         "DETECTER_REPONSE",
         "DECLARER_REPONSE",
       ];
     case "ESCALADE":
-      return ["CLASSER_SANS_SUITE", "REATTRIBUER", "DETECTER_REPONSE", "DECLARER_REPONSE"];
+      return ["CLASSER_SANS_SUITE", "REATTRIBUER", "REQUALIFIER", "DETECTER_REPONSE", "DECLARER_REPONSE"];
     case "REPONDU":
       return ["ARCHIVER", "ROUVRIR"];
     case "SANS_SUITE":

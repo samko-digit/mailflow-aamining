@@ -46,6 +46,8 @@ export type MessageCanonique = {
    * réponse du cabinet et fermerait l'échange qu'elle vient de relancer.
    */
   estGenereParMailflow: boolean;
+  /** Type du message MailFlow (relance, escalade, transfer, etc.) */
+  mailflowType?: string;
 };
 
 export type Exclusion = {
@@ -221,4 +223,23 @@ export function apercu(texte: string, longueur = 220): string {
 /** Normalise une adresse pour comparaison et stockage. */
 export function normaliserAdresse(a: string | null | undefined): string {
   return (a ?? "").trim().toLowerCase();
+}
+
+/**
+ * Détecte si un message est un transfert MailFlow.
+ * Les transferts portent X-MailFlow-Type: transfer.
+ */
+export function estTransfertMailflow(entetes: Map<string, string>): boolean {
+  const type = entetes.get("x-mailflow-type");
+  return type === "transfer";
+}
+
+/**
+ * Détecte si un message est généré par MailFlow, en excluant les transferts.
+ * Les relances, escalades, alertes et essais doivent être ignorés par la détection de réponse.
+ * Les transferts sont traités séparément pour permettre la corrélation.
+ */
+export function estGenereParMailflowExcluantTransfert(entetes: Map<string, string>): boolean {
+  const type = entetes.get("x-mailflow-type");
+  return type !== null && type !== "transfer";
 }

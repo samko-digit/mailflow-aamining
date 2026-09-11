@@ -25,6 +25,16 @@ import {
 } from "./actions";
 import { type Statut, transitionsPossibles } from "../domaine/cycle-echange";
 import { chargerTableauDeBord } from "../donnees/tableau-de-bord";
+import { chargerCompteursSidebar } from "../donnees/pages";
+import { prisma } from "../lib/prisma";
+
+async function utilisateurCourant() {
+  const u = await prisma.utilisateur.findFirst({
+    where: { role: "ADMINISTRATEUR", actif: true },
+    select: { nomComplet: true, role: true, initiales: true },
+  });
+  return u || { nomComplet: "Utilisateur", role: "LECTEUR", initiales: "?" };
+}
 import {
   attente,
   classeEvenement,
@@ -37,8 +47,8 @@ import {
   libelleEvenement,
   pastilleStatut,
 } from "./format";
+import { Sidebar } from "./components/Sidebar";
 import {
-  IconeAccueil,
   IconeAlerte,
   IconeArchive,
   IconeCalendrier,
@@ -46,23 +56,18 @@ import {
   IconeChevronBas,
   IconeChevronDroite,
   IconeChevronGauche,
-  IconeCloche,
   IconeCoche,
   IconeEclair,
   IconeEquipe,
   IconeHorloge,
-  IconeJournal,
   IconeMail,
   IconeOeil,
   IconePoints,
   IconePouls,
   IconeRecherche,
-  IconeRegles,
-  IconeReglages,
   IconeRelance,
   IconeRobot,
   IconeSoleil,
-  IconeUtilisateurs,
   IconeValide,
 } from "./icones";
 
@@ -78,82 +83,14 @@ export default async function TableauDeBord({
 }) {
   const { q } = await searchParams;
   const d = await chargerTableauDeBord(q);
+  const compteurs = await chargerCompteursSidebar();
+  const utilisateur = await utilisateurCourant();
   const now = d.maintenant;
   const total = d.repartition.reduce((s, r) => s + r.nombre, 0) || 1;
 
   return (
     <div className="appli">
-      {/* ── Panneau latéral ─────────────────────────────────────────── */}
-      <aside className="lateral">
-        <div className="marque">
-          <div className="logo">M</div>
-          <div>
-            <div className="nom">MailFlow</div>
-            <div className="baseline">Suivi · Relance · Résultats</div>
-          </div>
-        </div>
-
-        <nav className="groupe-nav">
-          <a href="/" className="nav-item actif">
-            <IconeAccueil /> Tableau de bord
-          </a>
-        </nav>
-
-        <nav className="groupe-nav">
-          <div className="groupe-titre">Principal</div>
-          <span className="nav-item">
-            <IconeHorloge /> Mails en attente
-            <em className="compteur">{d.menu.enAttente}</em>
-          </span>
-          <span className="nav-item">
-            <IconeRelance /> Relances
-            <em className="compteur alerte">{d.menu.relancesDues}</em>
-          </span>
-          <span className="nav-item">
-            <IconeValide /> Répondus
-            <em className="compteur">{d.menu.repondus}</em>
-          </span>
-        </nav>
-
-        <nav className="groupe-nav">
-          <div className="groupe-titre">Archives</div>
-          <span className="nav-item">
-            <IconeMail /> Tous les e-mails
-          </span>
-          <span className="nav-item">
-            <IconeArchive /> Archives
-          </span>
-        </nav>
-
-        <nav className="groupe-nav">
-          <div className="groupe-titre">Administration</div>
-          <span className="nav-item">
-            <IconeUtilisateurs /> Utilisateurs
-          </span>
-          <span className="nav-item">
-            <IconeRegles /> Règles de relance
-          </span>
-          <span className="nav-item">
-            <IconeReglages /> Paramètres
-          </span>
-          <span className="nav-item">
-            <IconeJournal /> Journal d&apos;activité
-          </span>
-        </nav>
-
-        <div className="pied">
-          <div className="carte-profil">
-            <div className="profil-ligne">
-              <div className="avatar">MB</div>
-              <div>
-                <div className="nom">Mamadou Berthé</div>
-                <div className="role">Administrateur</div>
-              </div>
-              <IconeChevronDroite aria-hidden />
-            </div>
-          </div>
-        </div>
-      </aside>
+      <Sidebar routeActuelle="/" compteurs={compteurs} />
 
       {/* ── Zone principale ─────────────────────────────────────────── */}
       <div className="principal">
@@ -171,18 +108,14 @@ export default async function TableauDeBord({
           </form>
 
           <div className="actions">
-            <button className="bouton-icone" aria-label="Notifications" type="button">
-              <IconeCloche />
-              <span className="badge">{d.indicateurs.enRetard}</span>
-            </button>
             <button className="bouton-icone" aria-label="Thème" type="button">
               <IconeSoleil />
             </button>
             <div className="utilisateur-barre">
-              <div className="avatar">MB</div>
+              <div className="avatar">{utilisateur.initiales}</div>
               <div>
-                <div className="nom">Mamadou Berthé</div>
-                <div className="role">Administrateur</div>
+                <div className="nom">{utilisateur.nomComplet}</div>
+                <div className="role">{utilisateur.role}</div>
               </div>
               <IconeChevronBas />
             </div>
@@ -192,7 +125,7 @@ export default async function TableauDeBord({
         <main className="contenu">
           <div className="entete">
             <div>
-              <h1>Bonjour, Mamadou</h1>
+              <h1>Bonjour, {utilisateur.nomComplet.split(" ")[0]}</h1>
               <p className="sous">
                 Voici l&apos;état du suivi des e-mails aujourd&apos;hui.
               </p>
@@ -238,7 +171,9 @@ export default async function TableauDeBord({
                       Effacer la recherche
                     </a>
                   ) : (
-                    <span className="lien">Voir tous →</span>
+                    <span className="lien" style={{ opacity: 0.5, cursor: "not-allowed" }}>
+                      Voir tous →
+                    </span>
                   )}
                 </div>
 
@@ -250,11 +185,6 @@ export default async function TableauDeBord({
                           <input
                             type="checkbox"
                             id="select-all"
-                            onChange={(e) => {
-                              document
-                                .querySelectorAll<HTMLInputElement>(".row-checkbox")
-                                .forEach((cb) => (cb.checked = e.target.checked));
-                            }}
                           />
                         </th>
                         <th>Sujet</th>
@@ -299,10 +229,10 @@ export default async function TableauDeBord({
                               <div className="cellule-sujet">
                                 <span className="liseré" style={{ background: couleurPriorite(e.priorite) }} />
                                 <div>
-                                  <div className="sujet-titre">
+                                  <a href={`/echange/${e.id}`} className="sujet-titre">
                                     {e.sujet}
                                     {e.aPieceJointe && <IconeTromboneInline />}
-                                  </div>
+                                  </a>
                                   <div className="sujet-extrait">{e.extrait}</div>
                                 </div>
                               </div>
@@ -342,16 +272,18 @@ export default async function TableauDeBord({
                             </td>
                             <td>
                               <div className="actions-ligne">
-                                <a
-                                  className="mini"
-                                  href={e.webLink ?? "#"}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  aria-label="Ouvrir le message d'origine"
-                                  title="Ouvrir le message d'origine"
-                                >
-                                  <IconeOeil />
-                                </a>
+                                {e.webLink && (
+                                  <a
+                                    className="mini"
+                                    href={e.webLink}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    aria-label="Ouvrir le message d'origine"
+                                    title="Ouvrir le message d'origine"
+                                  >
+                                    <IconeOeil />
+                                  </a>
+                                )}
                                 <button
                                   className="mini"
                                   popoverTarget={`m-${e.id}`}
@@ -459,7 +391,9 @@ export default async function TableauDeBord({
                     relance aux heures ouvrées seulement.
                   </div>
                 </div>
-                <span className="bouton">Voir comment ça marche</span>
+                <span className="bouton" style={{ opacity: 0.5, cursor: "not-allowed" }}>
+                  Voir comment ça marche
+                </span>
               </div>
             </div>
 
@@ -470,7 +404,9 @@ export default async function TableauDeBord({
                     <IconePouls />
                   </div>
                   <h2>Activité récente</h2>
-                  <span className="lien">Voir tout</span>
+                  <span className="lien" style={{ opacity: 0.5, cursor: "not-allowed" }}>
+                    Voir tout
+                  </span>
                 </div>
                 <div className="carte-corps activite">
                   {d.evenements.length === 0 && (
@@ -552,7 +488,9 @@ export default async function TableauDeBord({
                     <IconeEclair />
                   </div>
                   <h2>Automatisation</h2>
-                  <span className="lien">Voir détails</span>
+                  <span className="lien" style={{ opacity: 0.5, cursor: "not-allowed" }}>
+                    Voir détails
+                  </span>
                 </div>
                 <div className="carte-corps etapes">
                   <Etape etat="fait" libelle="Mail détecté" />
@@ -638,27 +576,43 @@ function FormulaireLot({ donnees }: { donnees: Donnees }) {
             <button className="btn primaire" type="submit">
               Qualifier la sélection
             </button>
-            <form action={classerHorsPerimetreEnLotAction} className="inline-form">
-              <input type="hidden" name="echangeIds" id="selected-ids-hp" />
-              <input
-                name="motif"
-                required
-                placeholder="Motif (alimente l'exclusion)"
-                style={{ width: "200px" }}
-              />
-              <button className="btn danger" type="submit">
-                Ignorer
-              </button>
-            </form>
             <button
               className="btn"
               type="button"
-              onClick={() => {
-                document
-                  .querySelectorAll<HTMLInputElement>(".row-checkbox")
-                  .forEach((cb) => (cb.checked = false));
-                document.getElementById("batch-form")!.style.display = "none";
-              }}
+              id="cancel-batch"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <form
+        action={classerHorsPerimetreEnLotAction}
+        className="formulaire-lot"
+        style={{ display: "none" }}
+        id="batch-form-hp"
+      >
+        <input type="hidden" name="echangeIds" id="selected-ids-hp" />
+        <div className="lot-barre">
+          <span className="lot-info">
+            <IconeCoche />
+            <span id="selected-count-hp">0</span> sélectionné(s)
+          </span>
+          <div className="lot-actions">
+            <input
+              name="motif"
+              required
+              placeholder="Motif (alimente l'exclusion)"
+              style={{ width: "200px" }}
+            />
+            <button className="btn danger" type="submit">
+              Ignorer la sélection
+            </button>
+            <button
+              className="btn"
+              type="button"
+              id="cancel-batch-hp"
             >
               Annuler
             </button>
@@ -671,23 +625,30 @@ function FormulaireLot({ donnees }: { donnees: Donnees }) {
             // Gestion de l'affichage du formulaire de lot
             const checkboxes = document.querySelectorAll('.row-checkbox');
             const batchForm = document.getElementById('batch-form');
+            const batchFormHp = document.getElementById('batch-form-hp');
             const selectedIdsInput = document.getElementById('selected-ids');
             const selectedIdsHpInput = document.getElementById('selected-ids-hp');
             const selectedCount = document.getElementById('selected-count');
+            const selectedCountHp = document.getElementById('selected-count-hp');
             const selectAll = document.getElementById('select-all');
+            const cancelBatch = document.getElementById('cancel-batch');
+            const cancelBatchHp = document.getElementById('cancel-batch-hp');
 
             function updateBatchForm() {
               const selected = Array.from(checkboxes)
                 .filter(cb => cb.checked && !cb.disabled)
                 .map(cb => cb.getAttribute('data-id'));
-              
+
               if (selected.length > 0) {
                 batchForm.style.display = 'block';
+                batchFormHp.style.display = 'block';
                 selectedIdsInput.value = selected.join(',');
                 selectedIdsHpInput.value = selected.join(',');
                 selectedCount.textContent = selected.length;
+                selectedCountHp.textContent = selected.length;
               } else {
                 batchForm.style.display = 'none';
+                batchFormHp.style.display = 'none';
               }
             }
 
@@ -696,10 +657,22 @@ function FormulaireLot({ donnees }: { donnees: Donnees }) {
             });
 
             selectAll.addEventListener('change', (e) => {
-              const target = e.target as HTMLInputElement;
+              const target = e.target;
               checkboxes.forEach(cb => {
                 if (!cb.disabled) cb.checked = target.checked;
               });
+              updateBatchForm();
+            });
+
+            cancelBatch.addEventListener('click', () => {
+              checkboxes.forEach(cb => cb.checked = false);
+              if (selectAll) selectAll.checked = false;
+              updateBatchForm();
+            });
+
+            cancelBatchHp.addEventListener('click', () => {
+              checkboxes.forEach(cb => cb.checked = false);
+              if (selectAll) selectAll.checked = false;
               updateBatchForm();
             });
           `,

@@ -165,8 +165,38 @@ export async function reporterRelance(f: FormData) {
 }
 
 export async function escalader(f: FormData) {
+  const echangeId = requis(f, "echangeId");
+  
+  const echange = await prisma.echange.findUniqueOrThrow({
+    where: { id: echangeId },
+    select: { categorieId: true },
+  });
+
+  if (!echange.categorieId) {
+    throw new Error("Impossible d'escalader : aucune catégorie attribuée.");
+  }
+
+  const categorie = await prisma.categorie.findUniqueOrThrow({
+    where: { id: echange.categorieId },
+    select: { escaladeVersId: true },
+  });
+
+  if (!categorie.escaladeVersId) {
+    throw new Error("Impossible d'escalader : aucun destinataire d'escalade configuré pour cette catégorie.");
+  }
+
+  // Vérifier que le destinataire existe et est actif
+  const destinataire = await prisma.utilisateur.findUnique({
+    where: { id: categorie.escaladeVersId },
+    select: { actif: true },
+  });
+
+  if (!destinataire || !destinataire.actif) {
+    throw new Error("Impossible d'escalader : le destinataire configuré n'existe pas ou n'est pas actif.");
+  }
+
   await appliquerEtPersister(
-    requis(f, "echangeId"),
+    echangeId,
     { type: "ESCALADER" },
     await auteurCourant()
   );
@@ -258,5 +288,54 @@ export async function classerHorsPerimetreEnLotAction(f: FormData) {
     console.warn(`${echecs.length} échecs sur ${echangeIds.length} échanges`);
   }
 
+  rafraichir();
+}
+
+// ── Requalification ─────────────────────────────────────────────────────────
+
+export async function requalifier(f: FormData) {
+  const echangeId = requis(f, "echangeId");
+  const categorieId = requis(f, "categorieId");
+  const responsableId = requis(f, "responsableId");
+
+  const [echange, categorie, responsable] = await Promise.all([
+    prisma.echange.findUniqueOrThrow({
+      where: { id: echangeId },
+      select: { 
+        recuLe: true,
+        categorieId: true,
+        responsableId: true,
+      },
+    }),
+    prisma.categorie.findUniqueOrThrow({
+      where: { id: categorieId },
+      select: { libelle: true },
+    }),
+    prisma.utilisateur.findUniqueOrThrow({
+      where: { id: responsableId },
+      select: { nomComplet: true },
+    }),
+  ]);
+
+  const { echeance, premiereRelance } = await calculerPremiereEcheance(
+    echange.recuLe,
+    categorieId
+  );
+
+  await appliquerEtPersister(
+    echangeId,
+    {
+      type: "REQUALIFIER",
+      categorie: categorieId,
+      responsable: responsableId,
+      echeance,
+      premiereRelance,
+      libelleCategorie: `Catégorie ${categorie.libelle}`,
+      libelleResponsable: `Attribué à ${responsable.nomComplet}`,
+      categorieAvant: echange.categorieId ?? undefined,
+      responsableAvant: echange.responsableId ?? undefined,
+    },
+    await auteurCourant()
+  );
   rafraichir();
 }

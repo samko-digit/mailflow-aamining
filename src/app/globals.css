@@ -314,6 +314,8 @@ tbody tr:hover td { background: #fafcff; }
 .past-cyan   { background: var(--cyan-clair);   color: #0b7c91; }
 .past-gris   { background: var(--gris-clair);   color: var(--encre-2); }
 
+.r-gris { background: var(--gris-clair); color: var(--encre-2); }
+
 .actions-ligne { display: flex; gap: 4px; justify-content: flex-end; }
 .mini {
   width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--bord-fort);

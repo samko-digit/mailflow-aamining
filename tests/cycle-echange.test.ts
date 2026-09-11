@@ -99,6 +99,13 @@ const TOUTES_TRANSITIONS: Transition[] = [
     archiverLe: J("2026-09-16T08:00:00Z"),
   },
   { type: "ARCHIVER", url: "https://stockage/echange/42" },
+  {
+    type: "REQUALIFIER",
+    categorie: "ADMIN",
+    responsable: "u-3",
+    echeance: J("2026-09-10T08:00:00Z"),
+    premiereRelance: J("2026-09-10T08:00:00Z"),
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -552,5 +559,192 @@ describe("Propriétés générales", () => {
       "REPONSE_DETECTEE",
       "MAIL_ARCHIVE",
     ]);
+  });
+});
+
+describe("Requalification", () => {
+  it("1. EN_ATTENTE → REQUALIFIER → EN_ATTENTE", () => {
+    const r = appliquer(enAttente(), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.statut, "EN_ATTENTE");
+  });
+
+  it("2. RELANCE → REQUALIFIER → EN_ATTENTE", () => {
+    const r = appliquer(etat("RELANCE", { nbRelances: 2, categorie: "COMMERCIAL", responsable: "u-1", echeance: J("2026-09-08T17:10:00Z") }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.statut, "EN_ATTENTE");
+    assert.equal(r.etat.nbRelances, 0, "le compteur de relances doit être remis à 0");
+  });
+
+  it("3. ESCALADE → REQUALIFIER → EN_ATTENTE", () => {
+    const r = appliquer(etat("ESCALADE", { nbRelances: 3, categorie: "COMMERCIAL", responsable: "u-1", echeance: J("2026-09-08T17:10:00Z") }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.statut, "EN_ATTENTE");
+    assert.equal(r.etat.nbRelances, 0);
+  });
+
+  it("4. changement catégorie", () => {
+    const r = appliquer(enAttente({ categorie: "COMMERCIAL" }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.categorie, "ADMIN");
+  });
+
+  it("5. changement responsable", () => {
+    const r = appliquer(enAttente({ responsable: "u-1" }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.responsable, "u-3");
+  });
+
+  it("6. recalcul échéance", () => {
+    const r = appliquer(enAttente({ echeance: J("2026-09-08T17:10:00Z") }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.echeance?.toISOString(), J("2026-09-10T08:00:00Z").toISOString());
+  });
+
+  it("7. gestion du TravailPlanifie (annulation + replanification)", () => {
+    const r = appliquer(enAttente(), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.ok(aEffet(r.effets, "ANNULER_TRAVAUX"), "les travaux doivent être annulés");
+    const p = planifications(r.effets);
+    assert.equal(p.length, 1, "une nouvelle relance doit être planifiée");
+    assert.equal(p[0].travail, "RELANCE");
+    assert.equal(p[0].ordre, 1);
+  });
+
+  it("8. gestion des Relance (conservation historique)", () => {
+    const r = appliquer(etat("RELANCE", { nbRelances: 2 }), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.nbRelances, 0, "le compteur est remis à 0 pour redémarrer le cycle");
+    assert.ok(aEffet(r.effets, "ANNULER_TRAVAUX"), "les travaux futurs sont annulés");
+  });
+
+  it("9. création événement MAIL_REQUALIFIE", () => {
+    const r = appliquer(enAttente(), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    const journalisations = r.effets.filter((e) => e.type === "JOURNALISER");
+    assert.ok(journalisations.some((j) => j.evenement === "MAIL_REQUALIFIE"));
+  });
+
+  it("10. conservation de l'historique (événements MAIL_ATTRIBUE)", () => {
+    const r = appliquer(enAttente(), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    const journalisations = r.effets.filter((e) => e.type === "JOURNALISER");
+    assert.ok(journalisations.some((j) => j.evenement === "MAIL_ATTRIBUE"));
+    assert.ok(journalisations.some((j) => j.evenement === "MAIL_REQUALIFIE"));
+  });
+
+  it("11. refus depuis un état non autorisé", () => {
+    assert.throws(
+      () =>
+        appliquer(etat("A_QUALIFIER"), {
+          type: "REQUALIFIER",
+          categorie: "ADMIN",
+          responsable: "u-3",
+          echeance: J("2026-09-10T08:00:00Z"),
+          premiereRelance: J("2026-09-10T08:00:00Z"),
+        }),
+      TransitionInterdite
+    );
+    assert.throws(
+      () =>
+        appliquer(etat("REPONDU"), {
+          type: "REQUALIFIER",
+          categorie: "ADMIN",
+          responsable: "u-3",
+          echeance: J("2026-09-10T08:00:00Z"),
+          premiereRelance: J("2026-09-10T08:00:00Z"),
+        }),
+      TransitionInterdite
+    );
+  });
+
+  it("12. idempotence (requalification identique)", () => {
+    const depart = enAttente({ categorie: "ADMIN", responsable: "u-3", echeance: J("2026-09-10T08:00:00Z") });
+    const r = appliquer(depart, {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    assert.equal(r.etat.categorie, "ADMIN");
+    assert.equal(r.etat.responsable, "u-3");
+  });
+
+  it("13. absence de doublons", () => {
+    const r = appliquer(enAttente(), {
+      type: "REQUALIFIER",
+      categorie: "ADMIN",
+      responsable: "u-3",
+      echeance: J("2026-09-10T08:00:00Z"),
+      premiereRelance: J("2026-09-10T08:00:00Z"),
+    });
+    const p = planifications(r.effets);
+    assert.equal(p.length, 1, "une seule relance planifiée");
+    assert.equal(p[0].ordre, 1);
+  });
+
+  it("14. transaction atomique en cas d'erreur (exige catégorie non vide)", () => {
+    assert.throws(
+      () =>
+        appliquer(enAttente(), {
+          type: "REQUALIFIER",
+          categorie: "  ",
+          responsable: "u-3",
+          echeance: J("2026-09-10T08:00:00Z"),
+          premiereRelance: J("2026-09-10T08:00:00Z"),
+        }),
+      TransitionIncomplete
+    );
   });
 });

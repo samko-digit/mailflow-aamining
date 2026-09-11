@@ -359,6 +359,7 @@ export class ConnecteurImap {
       estAutomatique: estAutomatique(entetes),
       estNonRemise: estNonRemise(entetes, expediteur.adresse),
       estGenereParMailflow: entetes.has("x-mailflow-type"),
+      mailflowType: entetes.get("x-mailflow-type"),
     };
   }
 
@@ -407,19 +408,17 @@ export class ConnecteurImap {
     }
     const donnees = Buffer.concat(morceaux);
 
-    let texte: string;
-    if (partie.encodage === "base64") {
-      texte = Buffer.from(donnees.toString("ascii"), "base64").toString("utf8");
-    } else if (partie.encodage === "quoted-printable") {
-      texte = donnees
-        .toString("utf8")
-        .replace(/=\r?\n/g, "")
-        .replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    } else {
-      texte = donnees.toString(
-        /iso-8859|windows-125/.test(partie.charset) ? "latin1" : "utf8"
-      );
-    }
+    // `download()` rend le contenu DÉJÀ débarrassé de son encodage de
+    // transfert : base64 et quoted-printable sont défaits par la bibliothèque.
+    // Le décoder une seconde fois produisait du binaire illisible, visible
+    // dans la console sous forme de charabia (4 échanges sur 108 le
+    // 10/09/2026 ; constaté puis vérifié sur uid=4387, partie base64).
+    //
+    // Reste à notre charge le seul jeu de caractères, que `download()` ne
+    // convertit pas.
+    let texte = donnees.toString(
+      /iso-8859|windows-125/.test(partie.charset) ? "latin1" : "utf8"
+    );
 
     // On ne se fie pas au type déclaré. Certains expéditeurs, dont le portail
     // fiscal observé ici, mettent du HTML dans une partie annoncée en texte

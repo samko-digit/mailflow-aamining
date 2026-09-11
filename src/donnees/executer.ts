@@ -21,6 +21,7 @@ import {
 import { chargerCalendrier } from "../domaine/calendrier";
 import { ajouterJoursOuvres, momentEnvoi } from "../domaine/echeance";
 import { prisma } from "../lib/prisma";
+import { Prisma } from "../generated/prisma/client";
 
 /** Champs de l'échange dont le domaine a besoin, et rien de plus. */
 const CHAMPS_ETAT = {
@@ -126,6 +127,22 @@ export async function appliquerEtPersister(
 
   if (transition.type === "RELANCER") complement.derniereRelanceLe = maintenant;
 
+  // Pour REQUALIFIER, capturer les valeurs avant modification
+  let valeurAvant: Record<string, unknown> | undefined;
+  let valeurApres: Record<string, unknown> | undefined;
+  if (transition.type === "REQUALIFIER") {
+    valeurAvant = {
+      categorie: ligne.categorieId,
+      responsable: ligne.responsableId,
+      echeance: ligne.echeance?.toISOString(),
+    };
+    valeurApres = {
+      categorie: transition.categorie,
+      responsable: transition.responsable,
+      echeance: transition.echeance.toISOString(),
+    };
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.echange.update({
       where: { id: echangeId },
@@ -201,6 +218,8 @@ export async function appliquerEtPersister(
           echangeId,
           utilisateurId: auteurId ?? null,
           acteur: auteurId ? "UTILISATEUR" : "SYSTEME",
+          valeurAvant: j.evenement === "MAIL_REQUALIFIE" ? (valeurAvant as never) : Prisma.JsonNull,
+          valeurApres: j.evenement === "MAIL_REQUALIFIE" ? (valeurApres as never) : Prisma.JsonNull,
         },
       });
     }

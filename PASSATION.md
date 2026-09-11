@@ -756,17 +756,28 @@ Correction du filtre `no-reply` : 16 dossiers sur 100 passaient au travers.
 
 **Stratégie de correction proposée** (PARTIELLEMENT IMPLÉMENTÉE) :
 - ✓ Améliorer la logique de suggestion : seuil minimal d'historique ajouté (2 qualifications)
+- ✓ Fichier CSV généré : propositions-requalification.csv (77 lignes) pour validation humaine
+- ✓ La console interdit déjà les valeurs par défaut (defaultValue="" avec option disabled)
 - ✗ Créer un script de requalification sélective avec validation humaine
-- ✗ Modifier la console pour exiger une sélection explicite de catégorie et responsable
-- ✗ Les suggestions doivent être affichées comme des propositions, pas comme des valeurs par défaut
+- ✗ Les suggestions doivent être affichées comme des propositions dans la console
 
 **2. Travaux planifiés en retard (CRITIQUE)**
 - 118 travaux au total
 - 103 en retard (87%) - certains de plus de 30 jours
 - 108 RELANCE, 8 SYNCHRO_BOITE, 2 ESCALADE
-- Les travaux en retard datent d'août 2026, mais nous sommes en septembre 2026
+- Retard moyen : 412h (17 jours)
+- Retard max : 773h (32 jours)
 
-**Cause probable** : Les échéances ont été calculées incorrectement ou les données de date sont incorrectes. À investiguer.
+**Cause identifiée** : Les travaux ont été créés le 8 septembre 2026 (aujourd'hui) mais avec des dates d'exécution prévues en août 2026 (dans le passé). Quand les 100 échanges ont été qualifiés avec `qualifier-tous.ts`, le système a créé des travaux de relance basés sur les échéances des échanges. Mais les échanges avaient déjà été reçus en août 2026, donc leurs échéances étaient déjà passées. Le système a donc créé des travaux avec des dates dans le passé.
+
+**Preuve** :
+- Échange reçu le : 2026-08-04
+- Échange échéance : 2026-08-07
+- Travail créé le : 2026-09-08 (aujourd'hui)
+- Travail prévu le : 2026-08-07 (dans le passé)
+- Delta échéance/travail : 0 min (cohérent mais dans le passé)
+
+**Solution nécessaire** : Recréer les travaux avec des dates futures correctes, basées sur la date de création du travail et non sur l'échéance originale de l'échange.
 
 **Validation technique** :
 - `npm run typecheck` : ✓ OK
@@ -789,12 +800,42 @@ Correction du filtre `no-reply` : 16 dossiers sur 100 passaient au travers.
 2. 87% des travaux planifiés sont en retard (certains de plus de 30 jours)
 
 **Ce qui reste à faire pour terminer la Phase 6** :
-1. Corriger les 77 qualifications incohérentes (requalification sélective avec validation humaine)
-2. Investiguer et corriger le problème des travaux en retard
-3. Modifier la console pour exiger une sélection explicite de catégorie et responsable
-4. Tester HORS_PERIMETRE en lot sur des échanges de test
-5. Tester le cycle complet qualification → relance → réponse
-6. Démontrer que les critères de sortie sont atteints avec des qualifications métier correctes
+1. Corriger les 77 qualifications incohérentes (requalification sélective avec validation humaine) - Fichier CSV généré ✓, Script créé ✓
+2. Corriger les 103 travaux en retard (recréer avec des dates futures) - Cause identifiée ✓, Script créé ✓
+3. Tester HORS_PERIMETRE en lot sur des échanges de test - Test réussi ✓
+4. Tester le cycle complet qualification → relance → réponse - NON TESTÉ (pas d'échanges A_QUALIFIER disponibles)
+5. Démontrer que les critères de sortie sont atteints avec des qualifications métier correctes - EN ATTENTE
+
+**Scripts de correction créés** (en attente de validation humaine) :
+- `scripts/corriger-qualifications.ts` : Lit `propositions-requalification.csv` et applique les corrections. Nécessite l'argument `--confirm` pour exécution.
+- `scripts/corriger-travaux-retard.ts` : Annule les travaux en retard et les recrée avec des dates futures basées sur la date actuelle.
+
+**Note importante** : Les corrections des 77 incohérences et des 103 travaux en retard nécessitent une validation humaine. Les scripts de correction ne doivent pas être exécutés automatiquement.
+
+### 8 septembre 2026 (fin de session)
+
+**Bilan de la validation métier de la Phase 6**
+
+Tests réalisés :
+- ✓ Analyse des 77 incohérences de qualification
+- ✓ Génération du fichier propositions-requalification.csv pour validation humaine
+- ✓ Vérification que la console interdit les valeurs par défaut (defaultValue="" avec option disabled)
+- ✓ Test du seuil minimal d'historique (2 qualifications) - 3/3 tests réussis
+- ✓ Analyse des 103 travaux en retard - cause identifiée (travaux créés avec dates passées)
+- ✓ Test de HORS_PERIMETRE en lot - 3/3 tests réussis
+- ✓ Tests de non-régression : typecheck ✓, test ✓ (193 tests), db:check ✓
+
+Fonctionnalités techniques :
+- ✓ Pré-suggestion avec seuil minimal d'historique (2 qualifications)
+- ✓ Qualification en lot
+- ✓ Classement en lot vers HORS_PERIMETRE
+- ✓ Console interdit les valeurs par défaut
+
+Problèmes identifiés (nécessitent validation humaine) :
+1. 77 qualifications incohérentes (73%) - fichier CSV généré pour correction
+2. 103 travaux en retard (87%) - cause identifiée, nécessite recréation avec dates futures
+
+**Conclusion** : La Phase 6 n'est PAS terminée. Les fonctionnalités techniques sont implémentées et testées, mais la validation métier révèle des problèmes critiques qui doivent être corrigés avec validation humaine avant de déclarer la phase terminée.
 
 ### (session suivante)
 

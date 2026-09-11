@@ -45,6 +45,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createHmac } from "node:crypto";
 
 import {
   type Statut,
@@ -92,8 +93,9 @@ type TravailPris = {
   id: string;
   type: TypeTravail;
   echange_id: string | null;
-  charge: { ordre?: number; boite?: string } | null;
+  charge: { ordre?: number; boite?: string; messageId?: string; sourceMailbox?: string; destinationMailbox?: string; uid?: number } | null;
   tentatives: number;
+  verrou_a?: Date | null;
 };
 
 type Resultat = {
@@ -309,6 +311,152 @@ async function archiverEchange(echangeId: string): Promise<string> {
   return `file://${chemin.replace(/\\/g, "/")}`;
 }
 
+// ── Transfert ──────────────────────────────────────────────────────────────
+
+/**
+ * Crée un travail de transfert avec idempotence déterministe.
+ *
+ * La clé d'idempotence est : ${echangeId}-transfer-${messageId}-${destinationMailbox}
+ * (destination normalisée)
+ */
+export async function creerTravailTransfert(params: {
+  echangeId: string;
+  messageId: string;
+  sourceMailbox: string;
+  destinationMailbox: string;
+  uid: number;
+  executerA?: Date;
+}): Promise<{ success: boolean; travailId?: string; existeDeja?: boolean }> {
+  const normaliser = (email: string) => email.trim().toLowerCase();
+  const destination = normaliser(params.destinationMailbox);
+  
+  const cleIdempotence = `${params.echangeId}-transfer-${params.messageId}-${destination}`;
+  
+  try {
+    const travail = await prisma.travailPlanifie.create({
+      data: {
+        type: "TRANSFERT",
+        echangeId: params.echangeId,
+        executerA: params.executerA ?? new Date(),
+        charge: {
+          messageId: params.messageId,
+          sourceMailbox: params.sourceMailbox,
+          destinationMailbox: params.destinationMailbox,
+          uid: params.uid,
+        },
+        cleIdempotence,
+      },
+    });
+    
+    return { success: true, travailId: travail.id };
+  } catch (e: any) {
+    // Violation de contrainte unique = déjà existant
+    if (e.code === "P2002") {
+      return { success: false, existeDeja: true };
+    }
+    throw e;
+  }
+}
+
+async function executerTransfert(
+  travailId: string,
+  echangeId: string,
+  ref: string,
+  charge: { messageId?: string; sourceMailbox?: string; destinationMailbox?: string; uid?: number } | null,
+  atelier: Atelier
+): Promise<Resultat> {
+  if (!charge?.messageId || !charge.sourceMailbox || !charge.destinationMailbox || !charge.uid) {
+    return { issue: "perime", detail: `transfert · ${ref} · charge incomplète` };
+  }
+
+  // Normalisation des adresses
+  const normaliser = (email: string) => email.trim().toLowerCase();
+  const source = normaliser(charge.sourceMailbox);
+  const destination = normaliser(charge.destinationMailbox);
+
+  // Validation anti-loop
+  if (source === destination) {
+    return { issue: "perime", detail: `transfert · ${ref} · source et destination identiques` };
+  }
+
+  // Validation whitelist
+  const whitelist = (process.env.MAILFLOW_DESTINATIONS_TRANSFERT ?? "")
+    .split(",")
+    .map(normaliser)
+    .filter(Boolean);
+
+  if (!whitelist.includes(destination)) {
+    return { issue: "perime", detail: `transfert · ${ref} · destination non autorisée` };
+  }
+
+  // Vérifier si transfert déjà en cours pour cet échange
+  const dejaTransfere = await prisma.travailPlanifie.findFirst({
+    where: {
+      echangeId,
+      type: "TRANSFERT",
+      statut: { in: ["EN_ATTENTE", "EN_COURS"] }
+    }
+  });
+
+  if (dejaTransfere) {
+    return { issue: "perime", detail: `transfert · ${ref} · déjà en cours pour cet échange` };
+  }
+
+  // Appel webhook n8n
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  if (!webhookUrl) {
+    return { issue: "perime", detail: `transfert · ${ref} · N8N_WEBHOOK_URL non configuré` };
+  }
+
+  const secret = process.env.N8N_WEBHOOK_SECRET;
+  if (!secret) {
+    return { issue: "perime", detail: `transfert · ${ref} · N8N_WEBHOOK_SECRET non configuré` };
+  }
+
+  try {
+    const payload = {
+      travailId: travailId, // ID réel du TravailPlanifie
+      requestId: `${travailId}-transfer-${charge.messageId}`,
+      exchangeId: echangeId,
+      messageId: charge.messageId,
+      sourceMailbox: charge.sourceMailbox,
+      destinationMailbox: charge.destinationMailbox,
+      uid: charge.uid,
+      requestedAt: new Date().toISOString()
+    };
+
+    const timestamp = Date.now();
+    const body = JSON.stringify(payload);
+    
+    // HMAC-SHA256(timestamp + "." + body)
+    const signature = createHmac("sha256", secret)
+      .update(timestamp + "." + body)
+      .digest("hex");
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-MailFlow-Signature": signature,
+        "X-MailFlow-Timestamp": timestamp.toString(),
+        "X-MailFlow-Idempotency-Key": `${echangeId}-transfer-${charge.messageId}-${destination}`
+      },
+      body
+    });
+
+    if (!response.ok) {
+      return { issue: "refuse", detail: `transfert · ${ref} · n8n a refusé : ${response.status}` };
+    }
+
+    // HTTP 200 signifie "accepté", PAS "terminé"
+    // Le travail reste EN_COURS, le callback finalisera
+    return { issue: "execute", detail: `transfert · ${ref} · webhook accepté, en attente callback` };
+
+  } catch (e) {
+    return { issue: "refuse", detail: `transfert · ${ref} · erreur webhook : ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 // ── Exécution d'un travail ─────────────────────────────────────────────────
 
 async function executerRelance(
@@ -436,6 +584,22 @@ async function executerUn(
         return { issue: "execute", detail: `archivage · ${ref}` };
       }
 
+      case "TRANSFERT": {
+        // Pour les transferts, on appelle n8n mais on ne termine PAS le travail
+        // Le callback finalisera en TERMINE ou ECHEC
+        const resultat = await executerTransfert(t.id, t.echange_id, ref, t.charge as any, atelier);
+        
+        // Si succès webhook, on laisse le travail EN_COURS (le callback finalisera)
+        // Si erreur immédiate, on peut échouer
+        if (resultat.issue === "execute") {
+          // Succès = webhook accepté, on ne marque pas TERMINE
+          return resultat;
+        } else {
+          // Erreur = on marque ECHEC
+          return resultat;
+        }
+      }
+
       default:
         return {
           issue: "perime",
@@ -509,11 +673,17 @@ export async function executerCycle(options?: {
           })
         : null;
 
+      // Calculer le temps en cours pour les travaux TRANSFERT (timeout)
+      const tempsEnCours = t.type === "TRANSFERT" && t.verrou_a
+        ? maintenant.getTime() - t.verrou_a.getTime()
+        : undefined;
+
       const decision = deciderTravail(
         t.type,
         maintenant,
         cal,
-        etat?.statut as Statut | undefined
+        etat?.statut as Statut | undefined,
+        tempsEnCours
       );
 
       if (decision.action === "perimer") {
@@ -555,6 +725,17 @@ export async function executerCycle(options?: {
         const r = await executerUn(t, maintenant, atelier);
 
         if (r.issue === "execute") {
+          // Pour les transferts, on ne marque pas TERMINE ici
+          // Le callback finalisera en TERMINE ou ECHEC
+          if (t.type === "TRANSFERT") {
+            // Le travail reste EN_COURS (déjà défini par prendreTravaux)
+            // On enregistre un événement pour tracer l'acceptation webhook
+            rapport.executes++;
+            rapport.lignes.push(`exécuté · ${r.detail} · en attente callback`);
+            continue;
+          }
+          
+          // Pour les autres types, on marque TERMINE normalement
           await prisma.travailPlanifie.update({
             where: { id: t.id },
             data: {
